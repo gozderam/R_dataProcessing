@@ -1,0 +1,796 @@
+---
+title: "pd1"
+author: "Michał Gozdera"
+date: "23/04/2021"
+output: html_document
+---
+
+## Intro
+
+```{r}
+#install.packages("data.table")
+```
+
+```{r}
+library("sqldf")
+library("dplyr")
+library("data.table")
+```
+
+```{r}
+
+
+
+Badges <- read.csv("C:\\MINI_Informatyka_sem_6\\Python_R\\Laby\\Pd1\\Data\\Badges.csv.gz")
+
+Comments <- read.csv("C:\\MINI_Informatyka_sem_6\\Python_R\\Laby\\Pd1\\Data\\Comments.csv.gz")
+
+PostLinks <- read.csv("C:\\MINI_Informatyka_sem_6\\Python_R\\Laby\\Pd1\\Data\\PostLinks.csv.gz")
+
+Posts <- read.csv("C:\\MINI_Informatyka_sem_6\\Python_R\\Laby\\Pd1\\Data\\Posts.csv.gz")
+
+Tags <- read.csv("C:\\MINI_Informatyka_sem_6\\Python_R\\Laby\\Pd1\\Data\\Tags.csv.gz")
+
+Users <- read.csv("C:\\MINI_Informatyka_sem_6\\Python_R\\Laby\\Pd1\\Data\\Users.csv.gz")
+
+Votes <- read.csv("C:\\MINI_Informatyka_sem_6\\Python_R\\Laby\\Pd1\\Data\\Votes.csv.gz")
+
+# data.table
+BadgesDT <- as.data.table(Badges)
+CommentsDT <- as.data.table(Comments)
+PostLinksDT <- as.data.table(PostLinks)
+PostsDT <- as.data.table(Posts)
+TagsDT <- as.data.table(Tags)
+UsersDT <- as.data.table(Users)
+VotesDT <- as.data.table(Votes)
+```
+
+## Ex 1
+
+### Sql
+
+```{r}
+
+# sql
+x_sql <- sqldf("
+SELECT UpVotesTab.*, Posts.Title FROM
+(
+SELECT PostId, COUNT(*) AS UpVotes
+FROM Votes
+WHERE VoteTypeId=2
+GROUP BY PostId
+) AS UpVotesTab
+JOIN Posts ON UpVotesTab.PostId=Posts.Id
+WHERE Posts.PostTypeId=1
+ORDER BY UpVotesTab.UpVotes DESC
+LIMIT 10
+")
+```
+
+### Base R
+
+```{r}
+# UpVotes
+UpVotesTab <- 
+  aggregate(
+    Votes[Votes$VoteTypeId==2, 'PostId'], 
+    by=Votes[Votes$VoteTypeId==2, 'PostId', drop=FALSE], 
+    FUN=length
+  )
+colnames(UpVotesTab)[2] <- "UpVotes"
+
+# merge UpVotes and Posts
+merged <- 
+  merge(
+    UpVotesTab, 
+    Posts[Posts$PostTypeId==1,c("Id", "Title")], 
+    by.x = "PostId", 
+    by.y = "Id"
+  )
+
+# order rows
+x_base_R <- head(
+  merged[order(merged$UpVotes, decreasing = TRUE),], 10)
+
+# handle details of dataframess differences
+row.names(x_base_R) <- NULL
+
+# compare base R
+dplyr::all_equal(x_sql, x_base_R)
+compare::compare(x_sql, x_base_R)
+```
+
+### dplyr
+
+```{r}
+
+x_dplyr <- 
+  Votes %>% 
+  filter(VoteTypeId==2) %>% 
+  group_by(PostId) %>% 
+  summarise (UpVotes = n()) %>%
+  inner_join(
+    Posts %>% 
+    filter(PostTypeId==1) %>% 
+    select(Id, Title), 
+    by=c("PostId" = "Id")) %>%
+  slice_max(UpVotes, n=10)
+  
+x_dplyr = as.data.frame(x_dplyr)
+
+# compare base R
+dplyr::all_equal(x_sql, x_dplyr)
+compare::compare(x_sql, x_dplyr)
+```
+
+### data.table
+
+```{r}
+x_dt <- head(
+  merge(
+    VotesDT[VoteTypeId==2, .(UpVotes = .N), PostId], #UpVotesTab
+    PostsDT[PostTypeId==1, .(Title, Id)], 
+    by.x = "PostId", 
+    by.y="Id"
+  )[order(-UpVotes)], 10)
+
+# handle details of dataframes differences
+x_dt<- as.data.table(x_dt)
+class(x_dt) <- "data.frame" 
+attr(x_dt,".internal.selfref") <- NULL 
+
+# compare base R
+dplyr::all_equal(x_sql, x_dt)
+compare::compare(x_sql, x_dt)
+```
+
+## Ex 2
+
+### Sql
+
+```{r}
+
+# sql
+x_sql <- sqldf("
+SELECT Users.DisplayName, Users.Age, Users.Location,
+AVG(Posts.Score) as PostsMeanScore,
+MAX(Posts.CreationDate) AS LastPostCreationDate
+FROM Posts
+JOIN Users ON Users.AccountId=Posts.OwnerUserId
+WHERE OwnerUserId != -1
+GROUP BY OwnerUserId
+ORDER BY PostsMeanScore DESC
+LIMIT 10
+")
+```
+
+### Base R
+
+```{r}
+
+# aggregate Posts.Score and Posts.CreationDate and merge results
+scored_creat <- merge(
+  aggregate(
+    Posts[, "Score", drop=TRUE], 
+    by = Posts["OwnerUserId"], 
+    FUN= mean
+  ),
+   aggregate(
+    Posts[, "CreationDate", drop=TRUE], 
+    by = Posts["OwnerUserId"], 
+    FUN= max
+  ),
+  by="OwnerUserId"
+)
+
+# rename columns 
+colnames(scored_creat)[c(2, 3)] <- c("PostsMeanScore", "LastPostCreationDate")
+
+# merge with user info
+scored_creat_userinfo <- merge(
+  Users[, c("AccountId", "DisplayName", "Age", "Location")],
+  scored_creat,
+  by.x = "AccountId",
+  by.y="OwnerUserId",
+
+)
+
+# select rows and columns
+x_base_R <- head(
+  scored_creat_userinfo[
+    order(
+    scored_creat_userinfo$PostsMeanScore,
+    decreasing = TRUE
+  ),], 
+  10
+)[,c("DisplayName", "Age", "Location", "PostsMeanScore", "LastPostCreationDate")]
+
+# handle details of dataframess differences
+row.names(x_base_R) <- NULL
+
+# compare base R
+dplyr::all_equal(x_sql, x_base_R)
+compare::compare(x_sql, x_base_R)
+
+```
+
+### dplyr
+
+```{r}
+x_dplyr <-
+  Posts %>% 
+  filter(OwnerUserId!=-1) %>%
+  inner_join(Users, by=c("OwnerUserId" = "AccountId" )) %>%
+  group_by(OwnerUserId) %>%
+  summarise(
+    DisplayName = head(DisplayName, 1),
+    Age = head(Age, 1),
+    Location = head(Location, 1),
+    PostsMeanScore =  mean(Score), 
+    LastPostCreationDate = max(CreationDate.x)
+  ) %>%
+  select(!OwnerUserId) %>% 
+  slice_max(PostsMeanScore, n=10)
+
+x_dplyr <- as.data.frame(x_dplyr)
+
+# compare base R
+dplyr::all_equal(x_sql, x_dplyr)
+compare::compare(x_sql, x_dplyr)
+```
+
+### data.table
+
+```{r}
+
+x_dt <- 
+  head( # take top 10 items
+    # merge
+    merge(
+      PostsDT[OwnerUserId!=-1], 
+      UsersDT,  
+      by.x = "OwnerUserId", 
+      by.y = "AccountId"
+    )[,                                           # all rows of merged
+      .(
+        DisplayName = head(DisplayName,1),        # aggregate 
+        Age = head(Age, 1),                     
+        Location = head(Location, 1),
+        PostsMeanScore = mean(Score),
+        LastPostCreationDate = max(CreationDate.x)
+      ),
+      .(OwnerUserId)                              # by OwnerUserId
+    ][order(-PostsMeanScore), !"OwnerUserId"],    # order rows, remove Id col
+    10
+  )
+
+# handle details of dataframes differences
+x_dt<- as.data.table(x_dt)
+class(x_dt) <- "data.frame" 
+attr(x_dt,".internal.selfref") <- NULL 
+
+# compare base R
+dplyr::all_equal(x_sql, x_dt)
+compare::compare(x_sql, x_dt)
+```
+
+## Ex 3
+
+### Sql
+
+```{r}
+
+# sql
+x_sql <- sqldf("
+SELECT DisplayName, QuestionsNumber, AnswersNumber
+FROM
+(
+SELECT COUNT(*) as AnswersNumber, Users.DisplayName, Users.Id
+FROM Users JOIN Posts ON Users.Id = Posts.OwnerUserId
+WHERE Posts.PostTypeId = 1
+GROUP BY Users.Id
+) AS Tab1
+JOIN
+(
+SELECT COUNT(*) as QuestionsNumber, Users.Id
+FROM Users JOIN Posts ON Users.Id = Posts.OwnerUserId
+WHERE Posts.PostTypeId = 2
+GROUP BY Users.Id
+) AS Tab2
+ON Tab1.Id = Tab2.Id
+WHERE QuestionsNumber < AnswersNumber
+ORDER BY AnswersNumber DESC
+")
+```
+
+### Base R
+
+```{r}
+# Tab1
+tabled1 <- as.data.frame(
+  table(
+    merge(
+      Users, 
+      Posts[Posts$PostTypeId == 1,], 
+      by.x = "Id", 
+      by.y = "OwnerUserId"
+      )$Id
+    ), 
+  stringsAsFactors = FALSE
+  )
+colnames(tabled1) <- c("Id", "AnswersNumber")
+
+Tab1 <- merge(
+  Users[,c("Id", "DisplayName")],
+  tabled1,
+  by ="Id",
+  all.x = FALSE,
+  all.y = TRUE
+  )
+
+
+# Tab2 
+Tab2 <- as.data.frame(
+  table(
+    merge(
+      Users, 
+      Posts[Posts$PostTypeId == 2,], 
+      by.x = "Id", 
+      by.y = "OwnerUserId"
+      )$Id
+    ), 
+  stringsAsFactors = FALSE
+  )
+colnames(Tab2) <- c("Id", "QuestionsNumber")
+
+
+# combine Tab1 & Tab2
+x_base_R <- merge(
+  Tab1, 
+  Tab2, 
+  by="Id"
+)
+
+# select rows
+x_base_R <- x_base_R[
+  x_base_R$QuestionsNumber < x_base_R$AnswersNumber,
+  c("DisplayName", "QuestionsNumber", "AnswersNumber")]
+x_base_R <- x_base_R[order(x_base_R$AnswersNumber, decreasing = TRUE),]
+
+# handle details of dataframes differences
+row.names(x_base_R) <- NULL
+
+# compare base R
+dplyr::all_equal(x_sql, x_base_R)
+compare::compare(x_sql, x_base_R)
+```
+
+### dplyr
+
+```{r}
+# Tab1 and Tab2 in separated queries for readability
+
+Tab1 <-
+  Users %>% 
+  inner_join(Posts %>% filter(PostTypeId==1), by=c("Id" = "OwnerUserId")) %>%
+  group_by(Id) %>%
+  summarise(
+    AnswersNumber = n(),
+    DisplayName = head(DisplayName, 1),
+    Users = head(Users, 1)
+  )
+
+
+Tab2 <-
+  Users %>% 
+  inner_join(Posts %>% filter(PostTypeId==2), by=c("Id" = "OwnerUserId")) %>%
+  group_by(Id) %>%
+  summarise(
+    QuestionsNumber = n(),
+  )
+
+x_dplyr <- 
+  Tab1 %>%
+  inner_join(Tab2, by="Id") %>% 
+  filter(QuestionsNumber < AnswersNumber) %>%
+  arrange(AnswersNumber)
+
+# compare base R
+#dplyr::all_equal(x_sql, x_dplyr)
+#compare::compare(x_sql, x_dplyr)
+
+head(x_sql)
+head(x_dplyr)
+```
+
+### data.table
+
+```{r}
+
+# Tab1 and Tab2 in separated queries for readability
+
+
+Tab1 <- 
+  merge(
+    UsersDT,
+    PostsDT[PostTypeId==1],
+    by.x = "Id",
+    by.y = "OwnerUserId"
+  )[,                                           # all rows
+    .(                                      
+      AnswersNumber = .N,                       # aggregate
+      DisplayName = head(DisplayName, 1)
+    ),
+    .(Id)                                       # by id
+  ]
+
+Tab2 <- 
+  merge(
+    UsersDT, 
+    PostsDT[PostTypeId==2],
+    by.x = "Id",
+    by.y = "OwnerUserId"
+  )[,
+    .(
+      QuestionsNumber = .N
+    ),
+    .(Id)
+    ]
+
+# merge Tab1 and Tab2
+x_dt <-
+  merge(
+    Tab1,
+    Tab2,
+    by = "Id",
+  )[
+    QuestionsNumber < AnswersNumber, 
+    c("DisplayName", "QuestionsNumber", "AnswersNumber")
+  ][
+    order(-AnswersNumber)
+  ]
+
+# handle details of dataframes differences
+x_dt<- as.data.table(x_dt)
+class(x_dt) <- "data.frame" 
+attr(x_dt,".internal.selfref") <- NULL 
+
+# compare base R
+dplyr::all_equal(x_sql, x_dt)
+compare::compare(x_sql, x_dt)
+```
+
+## Ex 4
+
+### Sql
+
+```{r}
+
+# sql
+x_sql <- sqldf("
+SELECT
+Users.DisplayName,
+Users.Age,
+Users.Location,
+SUM(Posts.FavoriteCount) AS FavoriteTotal,
+Posts.Title AS MostFavoriteQuestion,
+MAX(Posts.FavoriteCount) AS MostFavoriteQuestionLikes
+FROM Posts
+JOIN Users ON Users.Id=Posts.OwnerUserId
+WHERE Posts.PostTypeId=1
+GROUP BY OwnerUserId
+ORDER BY FavoriteTotal DESC
+LIMIT 10
+")
+```
+
+### Base R
+
+```{r}
+# aggregate posts by their owner
+suppressWarnings(
+  posts_agg_by_owner <- aggregate(
+    Posts[Posts$PostTypeId==1, "FavoriteCount"], 
+    by = Posts[Posts$PostTypeId==1, "OwnerUserId", drop = FALSE], 
+    FUN = function(x) {
+      c(FavoriteTotal=sum(x, na.rm=TRUE), 
+        MostFavoriteQuestionLikes=max(x, na.rm= TRUE))
+    })
+)
+
+
+# change the matrix produced by using FUN with several functions to df columns
+posts_agg_by_owner <- cbind(
+  posts_agg_by_owner[,1, drop=FALSE], 
+  posts_agg_by_owner[,2])
+
+# select top 10 items - no need to further process the others 
+top_10 <- head(
+  posts_agg_by_owner[order(posts_agg_by_owner$FavoriteTotal, decreasing = TRUE),], 
+  10)
+
+
+# merge with user and post info
+x_base_R <- merge(
+  merge(
+    top_10, 
+    Users[, c("Id", "DisplayName", "Age", "Location")],
+    all.x = TRUE,
+    all.y = FALSE,
+    by.x = "OwnerUserId",
+    by.y = "Id",
+      ),
+  Posts[,c("FavoriteCount", "OwnerUserId", "Title")],
+  by.x=c("MostFavoriteQuestionLikes", "OwnerUserId"),
+  by.y=c("FavoriteCount", "OwnerUserId")
+)
+
+
+# handle details of dataframes differences
+colnames(x_base_R)[which(names(x_base_R)=="Title")] <- "MostFavoriteQuestion"
+
+x_base_R <- x_base_R[
+  order(x_base_R$FavoriteTotal, decreasing = TRUE), 
+  c("DisplayName", "Age", "Location", "FavoriteTotal", "MostFavoriteQuestion", "MostFavoriteQuestionLikes")] 
+
+x_base_R[["FavoriteTotal"]] <- 
+  as.integer(x_base_R[["FavoriteTotal"]])
+x_base_R[["MostFavoriteQuestionLikes"]] <- 
+  as.integer(x_base_R[["MostFavoriteQuestionLikes"]])
+rownames(x_base_R) <-NULL
+
+
+# compare base R
+dplyr::all_equal(x_sql, x_base_R)
+compare::compare(x_sql, x_base_R)
+
+```
+
+### dplyr
+
+```{r}
+suppressWarnings(
+  x_dplyr <-
+    Posts %>%
+    filter(PostTypeId == 1) %>%
+    inner_join(Users, by=c( "OwnerUserId" = "Id")) %>%
+    group_by(OwnerUserId) %>%
+    summarise(
+      DisplayName = head(DisplayName, 1),
+      Age = head(Age, 1),
+      Location = head(Location, 1),
+      FavoriteTotal = sum(FavoriteCount, na.rm = TRUE),
+      MostFavoriteQuestionLikes = as.integer(max(FavoriteCount, na.rm = TRUE))
+    ) %>% 
+    slice_max(FavoriteTotal, n=10)  %>%
+    inner_join(
+      Posts %>% select(OwnerUserId, FavoriteCount,  Title), 
+      by=c(
+        "OwnerUserId" = "OwnerUserId", 
+        "MostFavoriteQuestionLikes" ="FavoriteCount"
+        )
+      ) %>%
+    select(!OwnerUserId) %>%
+    rename(MostFavoriteQuestion = Title) %>%
+    relocate(.before = MostFavoriteQuestionLikes, MostFavoriteQuestion)
+)
+
+x_dplyr <- as.data.frame(x_dplyr)
+
+# compare base R
+dplyr::all_equal(x_sql, x_dplyr)
+compare::compare(x_sql, x_dplyr)
+```
+
+### data.table
+
+```{r}
+suppressWarnings(                                         # needed for na.rm
+  x_dt <- 
+    merge(                                                # merge with Title 
+        head(                                             # select top 10 
+          merge(                                          # merge PostsDT & UsersDT 
+            PostsDT[PostTypeId==1, c("OwnerUserId", "FavoriteCount")], 
+            UsersDT,
+            by.x = "OwnerUserId",
+            by.y = "Id"
+          )[,                                             # all rows
+            .(                                            # aggregate
+              DisplayName = head(DisplayName, 1),
+              Age = head(Age, 1),
+              Location = head(Location, 1),
+              FavoriteTotal = sum(FavoriteCount, na.rm = TRUE),
+              MostFavoriteQuestionLikes = max(FavoriteCount, na.rm = TRUE)
+            ),
+            .(OwnerUserId)                                # by OwnerUserId
+          ][
+            order(-FavoriteTotal)
+          ],
+          10
+        ),
+        PostsDT[,c("OwnerUserId", "FavoriteCount", "Title")], 
+        by.x = c("OwnerUserId", "MostFavoriteQuestionLikes"),
+        by.y = c("OwnerUserId", "FavoriteCount")
+    )[order(-FavoriteTotal),                             # order rows
+      .(                                                 
+        DisplayName,                                     # reorder and change names
+        Age,                                             # of cols
+        Location, 
+        FavoriteTotal, 
+        MostFavoriteQuestion = Title, 
+        MostFavoriteQuestionLikes
+      )
+    ]
+)
+
+
+# handle details of dataframes differences
+x_dt<- as.data.table(x_dt)
+class(x_dt) <- "data.frame" 
+attr(x_dt,".internal.selfref") <- NULL 
+
+# compare base R
+dplyr::all_equal(x_sql, x_dt)
+compare::compare(x_sql, x_dt)
+```
+
+## Ex 5
+
+### Sql
+
+```{r}
+# sql
+x_sql <- sqldf("
+SELECT
+Questions.Id,
+Questions.Title,
+BestAnswers.MaxScore,
+Posts.Score AS AcceptedScore,
+BestAnswers.MaxScore-Posts.Score AS Difference
+FROM (
+SELECT Id, ParentId, MAX(Score) AS MaxScore
+FROM Posts
+WHERE PostTypeId==2
+GROUP BY ParentId
+) AS BestAnswers
+JOIN (
+SELECT * FROM Posts
+WHERE PostTypeId==1
+) AS Questions
+ON Questions.Id=BestAnswers.ParentId
+JOIN Posts ON Questions.AcceptedAnswerId=Posts.Id
+ORDER BY Difference DESC
+LIMIT 10
+")
+```
+
+### Base R
+
+```{r}
+
+# BestAnswers
+suppressWarnings(
+  BestAnswers <- aggregate(
+    Posts[Posts$PostTypeId==2, "Score", drop=FALSE], 
+    by=Posts[Posts$PostTypeId==2, "ParentId", drop=FALSE],
+    FUN = max, na.rm = TRUE)
+)
+colnames(BestAnswers) <- c("ParentId", "MaxScore")
+
+BestAnswers <- merge(
+  BestAnswers, 
+  Posts[!is.na(Posts$ParentId), c("ParentId", "Score", "Id")], 
+  by.x=c("ParentId", "MaxScore"),
+  by.y=c("ParentId", "Score")
+  ) 
+
+# Questions
+Questions <- Posts[Posts$PostTypeId==1,]
+
+# merge BestAnswers, Questions, Posts
+x_base_R <- merge(
+   merge(
+    Questions[, c("Id", "Title", "AcceptedAnswerId")], 
+    BestAnswers[, c("MaxScore", "ParentId")], 
+    by.x="Id", 
+    by.y="ParentId"), 
+  Posts[,c("Score", "Id")], 
+  by.x="AcceptedAnswerId", 
+  by.y = "Id")
+
+# add Difference
+x_base_R["Difference"] = x_base_R["MaxScore"] - x_base_R["Score"]
+
+# orderning rows and columns
+x_base_R <- head(
+  x_base_R[order(x_base_R$Difference, decreasing = TRUE), ], 10
+  )[, c("Id", "Title", "MaxScore", "Score", "Difference")]
+
+# handle details of dataframes differences
+rownames(x_base_R) <- NULL
+colnames(x_base_R)[which(names(x_base_R)=="Score")] <- "AcceptedScore"
+
+# compare base R
+dplyr::all_equal(x_sql, x_base_R)
+compare::compare(x_sql, x_base_R, allowAll=TRUE)
+
+```
+
+### dplyr
+
+```{r}
+
+BestAnswers <-
+  Posts %>%
+  filter(PostTypeId==2) %>%
+  group_by(ParentId) %>%
+  summarise(
+    MaxScore = max(Score)
+  )
+
+Questions <- 
+  Posts %>% 
+  filter(PostTypeId == 1) %>% 
+  select(Id, AcceptedAnswerId, Title)
+
+x_dplyr <- 
+  BestAnswers %>% 
+  inner_join(
+    Questions, 
+    by = c("ParentId" = "Id")
+  ) %>%
+  inner_join(
+    Posts %>% select(Id, Score), 
+    by = c("AcceptedAnswerId" = "Id")
+  ) %>%
+  mutate(Difference = MaxScore - Score) %>%
+  select(Id = ParentId, Title, MaxScore, AcceptedScore = Score, Difference ) %>%
+  slice_max(Difference, n=10)
+
+x_dplyr <- as.data.frame(x_dplyr)
+# compare base R
+
+dplyr::all_equal(x_sql, x_dplyr)
+compare::compare(x_sql, x_dplyr, allowAll=TRUE) 
+```
+
+### data.table
+
+```{r}
+
+x_dt <-  
+  head(                                                             # get top 10
+     merge(
+      merge(
+        PostsDT[PostTypeId==2, .(MaxScore = max(Score)), ParentId], # BestAnswers
+        PostsDT[PostTypeId==1, .(Id, AcceptedAnswerId, Title)],     # Questions
+        by.x = "ParentId",
+        by.y = "Id"
+      ),
+      PostsDT[, .(Id, Score)],
+      by.x = "AcceptedAnswerId",
+      by.y = "Id"
+    )[,                                                             # all rows
+      .(                                    
+        ParentId,                                                   # select columns
+        Title, 
+        AcceptedScore = Score, 
+        MaxScore,
+        Difference = MaxScore - Score
+      )
+    ][order(-Difference)],                                          # order      
+    10
+  )[, .(Id = ParentId, Title, MaxScore, AcceptedScore, Difference)] # reorder cols
+ 
+  
+# handle details of dataframes differences
+x_dt<- as.data.table(x_dt)
+class(x_dt) <- "data.frame" 
+attr(x_dt,".internal.selfref") <- NULL 
+
+
+# compare base R
+dplyr::all_equal(x_sql, x_dt)
+compare::compare(x_sql, x_dt)
+
+```
